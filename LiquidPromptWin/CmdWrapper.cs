@@ -244,7 +244,7 @@ namespace LiquidPromptWin
         }
         private void WriteInfos(DirectoryInfo currentWorkingDirectory)
         {
-            var infoBuilder = new StringBuilder();
+            var infoBuilder = new CommandLineStringBuilder();
             infoBuilder.Append(currentWorkingDirectory.FullName);
 
             var discovered = Repository.Discover(currentWorkingDirectory.FullName);
@@ -253,6 +253,7 @@ namespace LiquidPromptWin
                 var repo = new Repository(discovered);
                 var branch = repo.Head.FriendlyName;
                 var stashes = repo.Stashes.Count();
+                //var commits = repo.Commits.Count(c => c.)
                 var statusOptions = new StatusOptions
                 {
                     ExcludeSubmodules = true,
@@ -279,34 +280,39 @@ namespace LiquidPromptWin
                     var removed = status.Removed.Count();
                     var modified = status.Modified.Count();
                     var untracked = status.Untracked.Count();
+                    var missing = status.Missing.Count();
 
-                    IList<string> statusUpdates = new List<string>();
+                    IList<Chunk> statusUpdates = new List<Chunk>();
                     if (added > 0)
                     {
-                        statusUpdates.Add($"+{added}");
+                        statusUpdates.Add(new Chunk { Content = $"+{added}", Color = ConsoleColor.Green});
                     }
                     if (modified > 0)
                     {
-                        statusUpdates.Add($"~{modified}");
+                        statusUpdates.Add(new Chunk { Content = $"~{modified}", Color = ConsoleColor.Yellow });
                     }
                     if (removed > 0)
                     {
-                        statusUpdates.Add($"-{removed}");
+                        statusUpdates.Add(new Chunk { Content = $"-{removed}", Color = ConsoleColor.Red });
                     }
                     if ((added > 0 || modified > 0 || removed > 0) && (staged > 0 || untracked > 0))
                     {
-                        statusUpdates.Add("|");
+                        statusUpdates.Add(new Chunk { Content = "|", Color = ConsoleColor.White });
                     }
                     if (staged > 0)
                     {
-                        statusUpdates.Add($"@{staged}");
+                        statusUpdates.Add(new Chunk { Content = $"@{staged}", Color = ConsoleColor.Magenta });
                     }
                     if (untracked > 0)
                     {
-                        statusUpdates.Add($"?{untracked}");
+                        statusUpdates.Add(new Chunk { Content = $"?{untracked}", Color = ConsoleColor.Gray });
+                    }
+                    if (missing > 0)
+                    {
+                        statusUpdates.Add(new Chunk { Content = $"x{missing}", Color = ConsoleColor.Red });
                     }
 
-                    infoBuilder.Append(string.Join(" ", statusUpdates));
+                    infoBuilder.AppendMany(statusUpdates, new Chunk { Content = " ", Color = ConsoleColor.White });
                     infoBuilder.Append(")");
                 }
 
@@ -315,7 +321,7 @@ namespace LiquidPromptWin
             }
 
             infoBuilder.Append(">");
-            Console.Write(infoBuilder.ToString());
+            infoBuilder.Flush();
         }
         private void DelOperation(string currentInput, int position, bool clearTrailing = false)
         {
