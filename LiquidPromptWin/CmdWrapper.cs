@@ -4,47 +4,99 @@ using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Runtime.CompilerServices;
+using System.Security.Principal;
 using System.Text;
+using System.Threading;
+using System.Threading.Tasks;
 using CliWrap;
 using LibGit2Sharp;
+using LiquidPromptWin.Elevated;
+using LiquidPromptWin.InputCapable;
 
 namespace LiquidPromptWin
 {
     public class CmdWrapper
     {
-        private readonly ICli _cmd;
         private readonly IList<string> _inputs;
+        private readonly CancellationTokenSource _cancellationTokenSource;
+        private readonly object _positionLockHandle = new object();
+
+        public const ConsoleColor DefaultColor = ConsoleColor.Gray;
 
         public CmdWrapper()
         {
-            _cmd = Cli.Wrap("cmd.exe");
             _inputs = new List<string>();
+            _cancellationTokenSource = new CancellationTokenSource();
         }
 
-        public void Initialize()
+        private string GetArgumentsForElevatedCmd(DirectoryInfo currentWorkingDirectory, string filePath, string originalArguments)
+        {
+            return string.Join(" && ", $"/K cd /D {currentWorkingDirectory.FullName}",
+                $"echo {filePath} {originalArguments} @ {currentWorkingDirectory.FullName}", $"{filePath} {originalArguments}");
+        }
+
+        private bool IsElevated() =>
+            new WindowsPrincipal(WindowsIdentity.GetCurrent()).IsInRole(WindowsBuiltInRole.Administrator);
+        public ICli Wrap(string input, DirectoryInfo currentWorkingDirectory, bool elevatedPermission = false, bool elevatedCommand = false)
+        {
+            var split = input.Split(new[] { ' ' }, 2);
+            var filePath = split[0];
+            string arguments = "";
+            if (split.Length > 1)
+            {
+                arguments = split[1];
+            }
+            ICli wrap;
+            if (elevatedPermission && !IsElevated())
+            {
+                wrap = new ElevatedCli(filePath);
+            }
+            else if (elevatedCommand && !IsElevated())
+            {
+                wrap = new ElevatedCli("cmd.exe");
+                arguments = GetArgumentsForElevatedCmd(currentWorkingDirectory, filePath, arguments);
+            }
+            else
+            {
+                wrap = Cli.Wrap(filePath);
+                //wrap = new InputCapableCli(filePath);
+            }
+
+
+            wrap.SetStandardOutputCallback(Console.WriteLine)
+                .SetStandardErrorCallback(Console.WriteLine)
+                //.SetStandardInput(Console.OpenStandardInput())
+                .EnableExitCodeValidation(false)
+                .SetWorkingDirectory(currentWorkingDirectory.FullName)
+                .SetArguments(arguments)
+                .SetCancellationToken(_cancellationTokenSource.Token);
+
+            return wrap;
+        }
+        public void Initialize(string[] args)
         {
             Console.WriteLine("LiquidPrompt for Windows by Boden_Units");
             Console.WriteLine();
             var initialOutput = new List<string>();
-            _cmd.SetStandardOutputCallback(line => initialOutput.Add(line));
-            _cmd.Execute();
+            var cmd = Cli.Wrap("cmd.exe");
+            cmd.SetStandardOutputCallback(line => initialOutput.Add(line));
+            cmd.Execute();
             foreach (var ele in initialOutput.Take(initialOutput.Count - 2))
             {
                 Console.WriteLine(ele);
             }
-
-            _cmd.SetStandardOutputCallback(Console.WriteLine);
-            _cmd.SetStandardErrorCallback(Console.WriteLine);
-            _cmd.EnableExitCodeValidation(false);
         }
 
-        public void Start()
+        public async Task Start()
         {
             DirectoryInfo currentWorkingDirectory = new DirectoryInfo(Directory.GetCurrentDirectory());
+            //ExecutionResultWithRemainingInput takeWithResult = null;
+            //ConsoleKeyInfo? takeWithKey = null;
+            TimeSpan timeElapsed = TimeSpan.Zero;
             while (true)
             {
                 Console.WriteLine();
-                WriteInfos(currentWorkingDirectory);
+                WriteInfos(currentWorkingDirectory, timeElapsed);
                 var inputBuilder = new StringBuilder();
 
                 bool inputFinished = false;
@@ -52,7 +104,31 @@ namespace LiquidPromptWin
                 int inHistory = _inputs.Count;
                 while (!inputFinished)
                 {
+                    //ConsoleKeyInfo key;
+                    //if (takeWithKey.HasValue)
+                    //{
+                    //    key = takeWithKey.Value;
+                    //}
+                    //else
+                    //{
+                    //    key = Console.ReadKey(true);
+                    //    if (takeWithResult != null && takeWithResult.RemainingInput.Length > 0)
+                    //    {
+                    //        var temp = Console.InputEncoding.GetChars(takeWithResult.RemainingInput)[0];
+                    //        takeWithKey = key;
+                    //        key = new ConsoleKeyInfo(temp, ConsoleKey.A, false, false, false);
+                    //    }
+                    //}
                     var key = Console.ReadKey(true);
+
+                    if (key.Modifiers != 0)
+                    {
+                        if (key.Modifiers == ConsoleModifiers.Control && key.Key == ConsoleKey.L)
+                        {
+                            //PerformDiscovery(currentWorkingDirectory, inputBuilder);
+                            continue;
+                        }
+                    }
                     if (key.Key == ConsoleKey.Enter)
                     {
                         inputFinished = true;
@@ -69,9 +145,16 @@ namespace LiquidPromptWin
                     }
                 }
 
-                var input = inputBuilder.ToString();
+                var input = inputBuilder.ToString().Trim();
+                if (string.IsNullOrEmpty(input))
+                {
+                    Console.WriteLine();
+                    timeElapsed = TimeSpan.FromSeconds(0);
+                    continue;
+                }
                 if (input == "exit")
                 {
+                    Console.WriteLine();
                     break;
                 }
 
@@ -88,10 +171,49 @@ namespace LiquidPromptWin
                     }
                 }
 
+                bool executeWithElevatedPermission = false;
+                bool executeCommandWithElevatedPermission = false;
+                if (input.StartsWith("sudo "))
+                {
+                    executeWithElevatedPermission = true;
+                    input = input.Split(new[] { ' ' }, 2)[1];
+                }
+                if (input.StartsWith("sudoc ") || input.StartsWith("sudocommand "))
+                {
+                    executeCommandWithElevatedPermission = true;
+                    input = input.Split(new[] { ' ' }, 2)[1];
+                }
+
                 _inputs.Add(input);
                 Console.WriteLine();
-                _cmd.SetWorkingDirectory(currentWorkingDirectory.FullName).SetArguments($"/C {input}").Execute();
+                var wrap = Wrap(input, currentWorkingDirectory, executeWithElevatedPermission, executeCommandWithElevatedPermission);
+                try
+                {
+                    var result = wrap.Execute();
+                    timeElapsed = result.RunTime;
+                }
+                catch(Exception exc)
+                {
+                    Console.WriteLine($"Error while executing: {exc.GetType()}: {exc.Message}");
+                }
+
+                //if (result is ExecutionResultWithRemainingInput withInput)
+                //{
+                //    takeWithResult = withInput;
+                //}
             }
+        }
+
+        public void PerformDiscovery(DirectoryInfo currentWorkingDirectory, StringBuilder inputBuilder)
+        {
+            Console.WriteLine();
+            var files = currentWorkingDirectory.GetFiles();
+            Array.Sort(files, (left, right) => left.Name.CompareTo(right.Name));
+            var fileString = string.Join(" ", (IEnumerable<FileInfo>) files);
+            Console.WriteLine(fileString);
+            Console.WriteLine();
+            WriteInfos(currentWorkingDirectory, TimeSpan.Zero);
+            Console.Write(inputBuilder.ToString());
         }
 
         private static readonly ConsoleKey[] SpecialKeys = {
@@ -110,26 +232,41 @@ namespace LiquidPromptWin
             switch (key)
             {
                 case ConsoleKey.Backspace:
-                    if (position <= 0) break;
+                    if (position <= 0)
+                    {
+                        break;
+
+                    }
+
                     inputBuilder.Remove(position - 1, 1);
                     position -= 1;
                     Console.CursorLeft -= 1;
-                    DelOperation(inputBuilder.ToString(), position);
+                    DelOperation(inputBuilder, position);
                     break;
                 case ConsoleKey.Delete:
-                    if (position >= inputBuilder.Length) break;
+                    if (position >= inputBuilder.Length)
+                    {
+                        break;
+                    }
+
                     inputBuilder.Remove(position, 1);
-                    DelOperation(inputBuilder.ToString(), position);
+                    DelOperation(inputBuilder, position);
                     break;
                 case ConsoleKey.RightArrow:
-                    if (position >= inputBuilder.Length) break;
+                    if (position >= inputBuilder.Length)
+                    {
+                        break;
+                    }
                     position += 1;
-                    Console.CursorLeft += 1;
+                    MoveCursorRight(1);
                     break;
                 case ConsoleKey.LeftArrow:
-                    if (position <= 0) break;
+                    if (position <= 0)
+                    {
+                        break;
+                    }
                     position -= 1;
-                    Console.CursorLeft -= 1;
+                    MoveCursorRight(-1);
                     break;
                 case ConsoleKey.UpArrow:
                     if (inHistory > 0)
@@ -139,14 +276,21 @@ namespace LiquidPromptWin
                     }
                     break;
                 case ConsoleKey.DownArrow:
-                    inHistory += 1;
-                    if (inHistory < _inputs.Count)
-                    {
-                        ReplaceCurrentInput(inputBuilder, _inputs[inHistory], ref position);
-                    }
-                    else
+                    if (_inputs.Count == 0)
                     {
                         ReplaceCurrentInput(inputBuilder, "", ref position);
+                    }
+                    else if (inHistory < _inputs.Count)
+                    {
+                        inHistory += 1;
+                        if (inHistory < _inputs.Count)
+                        {
+                            ReplaceCurrentInput(inputBuilder, _inputs[inHistory], ref position);
+                        }
+                        else
+                        {
+                            ReplaceCurrentInput(inputBuilder, "", ref position);
+                        }
                     }
                     break;
                 case ConsoleKey.Tab:
@@ -166,14 +310,19 @@ namespace LiquidPromptWin
             {
                 throw new Exception($"Error in {caller}: {text}");
             }
-            Console.ForegroundColor = ConsoleColor.White;
+            Console.ForegroundColor = DefaultColor;
             Console.WriteLine();
         }
         private void HandleTabKeyPressed(DirectoryInfo currentWorkingDirectory, ref int position, StringBuilder inputBuilder)
         {
             var inputs = inputBuilder.ToString().Split(' ');
             var currentWord = inputs.Length > 0 ? inputs[inputs.Length - 1] : "";
-            var files = currentWorkingDirectory.GetFiles();
+            if (currentWord.Contains("="))
+            {
+                var split = currentWord.Split(new[] { '=' }, 2);
+                currentWord = split[1];
+            }
+            var files = currentWorkingDirectory.GetFileSystemInfos();
             Array.Sort(files, (left, right) => left.Name.CompareTo(right.Name));
             var match = files.FirstOrDefault(f => f.Name.StartsWith(currentWord));
             if (match != null)
@@ -195,7 +344,7 @@ namespace LiquidPromptWin
                     }
 
                     match = files[matchIndex + 1];
-                    ReplaceCurrentInput(inputBuilder, match.Name, ref position);
+                    ReplaceCurrentTail(inputBuilder, currentWord, match.Name, ref position);
                 }
             }
             else
@@ -203,17 +352,36 @@ namespace LiquidPromptWin
                 Console.Beep();
             }
         }
-        private void ReplaceCurrentInput(StringBuilder inputBuilder, string newInput, ref int position)
+        private void MoveCursorRight(int steps)
         {
-            var currentWord = inputBuilder.ToString();
-            position -= currentWord.Length;
-            Console.CursorLeft -= currentWord.Length;
-            DelOperation(inputBuilder.ToString(), position, true);
-            inputBuilder.Remove(position, currentWord.Length);
+            while (Console.CursorLeft + steps < 0)
+            {
+                Console.CursorTop -= 1;
+                steps += Console.WindowWidth;
+            }
+            while (Console.CursorLeft + steps >= Console.WindowWidth)
+            {
+                Console.CursorTop += 1;
+                steps -= Console.WindowWidth;
+            }
+            Console.CursorLeft += steps;
+        }
+        private void ReplaceCurrentTail(StringBuilder inputBuilder, string currentTail, string newInput, ref int position)
+        {
+            position -= currentTail.Length;
+            MoveCursorRight(-currentTail.Length);
+            DelOperation(inputBuilder, position, true);
+            inputBuilder.Remove(position, currentTail.Length);
             Console.Write(newInput);
             position += newInput.Length;
             inputBuilder.Append(newInput);
         }
+
+        private void ReplaceCurrentInput(StringBuilder inputBuilder, string newInput, ref int position)
+        {
+            ReplaceCurrentTail(inputBuilder, inputBuilder.ToString(), newInput, ref position);
+        }
+
         private DirectoryInfo TraverseDirectories(DirectoryInfo currentWorkingDirectory, string path)
         {
             var parts = path.Split('/');
@@ -242,9 +410,10 @@ namespace LiquidPromptWin
             }
             return working;
         }
-        private void WriteInfos(DirectoryInfo currentWorkingDirectory)
+        private void WriteInfos(DirectoryInfo currentWorkingDirectory, TimeSpan timeElapsed)
         {
             var infoBuilder = new CommandLineStringBuilder();
+            infoBuilder.Append("$ ", ConsoleColor.Green);
             infoBuilder.Append(currentWorkingDirectory.FullName);
 
             var discovered = Repository.Discover(currentWorkingDirectory.FullName);
@@ -270,6 +439,11 @@ namespace LiquidPromptWin
                 if (stashes > 0)
                 {
                     infoBuilder.Append($"[{stashes}]");
+                }
+                var ahead = (repo.Head.TrackingDetails.AheadBy ?? 0) - (repo.Head.TrackingDetails.BehindBy ?? 0);
+                if (ahead != 0)
+                {
+                    infoBuilder.Append($"({ahead}");
                 }
                 if (status.IsDirty)
                 {
@@ -297,7 +471,7 @@ namespace LiquidPromptWin
                     }
                     if ((added > 0 || modified > 0 || removed > 0) && (staged > 0 || untracked > 0))
                     {
-                        statusUpdates.Add(new Chunk { Content = "|", Color = ConsoleColor.White });
+                        statusUpdates.Add(new Chunk { Content = "|", Color = DefaultColor });
                     }
                     if (staged > 0)
                     {
@@ -305,26 +479,31 @@ namespace LiquidPromptWin
                     }
                     if (untracked > 0)
                     {
-                        statusUpdates.Add(new Chunk { Content = $"?{untracked}", Color = ConsoleColor.Gray });
+                        statusUpdates.Add(new Chunk { Content = $"?{untracked}", Color = ConsoleColor.DarkGreen });
                     }
                     if (missing > 0)
                     {
                         statusUpdates.Add(new Chunk { Content = $"x{missing}", Color = ConsoleColor.Red });
                     }
 
-                    infoBuilder.AppendMany(statusUpdates, new Chunk { Content = " ", Color = ConsoleColor.White });
+                    infoBuilder.AppendMany(statusUpdates, new Chunk { Content = " ", Color = DefaultColor });
                     infoBuilder.Append(")");
                 }
 
                 infoBuilder.Append("]");
+            }
 
+            if (timeElapsed > TimeSpan.FromMilliseconds(500))
+            {
+                infoBuilder.Append($" {Math.Round(timeElapsed.TotalSeconds, 1):0.0}s", ConsoleColor.White);
             }
 
             infoBuilder.Append(">");
             infoBuilder.Flush();
         }
-        private void DelOperation(string currentInput, int position, bool clearTrailing = false)
+        private void DelOperation(StringBuilder inputBuilder, int position, bool clearTrailing = false)
         {
+            string currentInput = inputBuilder.ToString();
             var cursor = Console.CursorLeft;
             if (clearTrailing)
             {

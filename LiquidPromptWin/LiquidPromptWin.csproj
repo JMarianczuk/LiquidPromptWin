@@ -53,10 +53,17 @@
     <Reference Include="System.Xml" />
   </ItemGroup>
   <ItemGroup>
+    <Compile Include="Elevated\ElevatedCliProcess.cs" />
     <Compile Include="CmdWrapper.cs" />
     <Compile Include="CommandLineStringBuilder.cs" />
+    <Compile Include="Elevated\ElevatedCli.cs" />
+    <Compile Include="InputCapable\ExecutionResultWithRemainingInput.cs" />
+    <Compile Include="InputCapable\InputCapableCli.cs" />
+    <Compile Include="InputCapable\InputCapableCliProcess.cs" />
+    <Compile Include="IStoppableStream.cs" />
     <Compile Include="Program.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
+    <Compile Include="StandardInputWrap.cs" />
   </ItemGroup>
   <ItemGroup>
     <None Include="App.config" />

@@ -12,7 +12,7 @@ namespace LiquidPromptWin
             _chunks = new List<Chunk>();
         }
 
-        public void Append(string content, ConsoleColor color = ConsoleColor.White)
+        public void Append(string content, ConsoleColor color = CmdWrapper.DefaultColor)
         {
             Append(new Chunk { Content = content, Color = color });
         }
@@ -64,7 +64,7 @@ namespace LiquidPromptWin
                 Console.ForegroundColor = c.Color;
                 Console.Write(c.Content);
             }
-            Console.ForegroundColor = ConsoleColor.White;
+            Console.ForegroundColor = CmdWrapper.DefaultColor;
         }
     }
     public class Chunk

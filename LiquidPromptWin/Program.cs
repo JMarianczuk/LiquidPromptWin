@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Collections;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
@@ -13,8 +14,8 @@ namespace LiquidPromptWin
         public static void Main(string[] args)
         {
             var cmd = new CmdWrapper();
-            cmd.Initialize();
-            cmd.Start();
+            cmd.Initialize(args);
+            cmd.Start().Wait();
         }
     }
 }
