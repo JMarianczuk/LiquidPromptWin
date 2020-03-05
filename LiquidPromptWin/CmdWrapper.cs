@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.ComponentModel;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
@@ -75,7 +76,7 @@ namespace LiquidPromptWin
         }
         public void Initialize(string[] args)
         {
-            Console.WriteLine("LiquidPrompt for Windows by Boden_Units");
+            Console.WriteLine("LiquidPrompt for Windows by JMarianczuk. https://github.com/JMarianczuk");
             Console.WriteLine();
             var initialOutput = new List<string>();
             var cmd = Cli.Wrap("cmd.exe");
@@ -187,21 +188,48 @@ namespace LiquidPromptWin
                 _inputs.Add(input);
                 Console.WriteLine();
                 var wrap = Wrap(input, currentWorkingDirectory, executeWithElevatedPermission, executeCommandWithElevatedPermission);
-                try
+                var (exResult, time) = TryExecute(wrap);
+                if (exResult == ExecutionResult.CantFindFile)
                 {
-                    var result = wrap.Execute();
-                    timeElapsed = result.RunTime;
+                    input = "cmd /c " + input;
+                    wrap = Wrap(input, currentWorkingDirectory, executeWithElevatedPermission, executeCommandWithElevatedPermission);
+                    (exResult, time) = TryExecute(wrap);
+                    timeElapsed = time;
                 }
-                catch(Exception exc)
+                else
                 {
-                    Console.WriteLine($"Error while executing: {exc.GetType()}: {exc.Message}");
+                    timeElapsed = time;
                 }
-
-                //if (result is ExecutionResultWithRemainingInput withInput)
-                //{
-                //    takeWithResult = withInput;
-                //}
             }
+        }
+
+        private (ExecutionResult, TimeSpan) TryExecute(ICli wrap)
+        {
+            ExecutionResult result;
+            TimeSpan timeElapsed = TimeSpan.Zero;
+            try
+            {
+                var exResult = wrap.Execute();
+                result = ExecutionResult.Success;
+                timeElapsed = exResult.RunTime;
+            }
+            catch (Win32Exception exc)
+            {
+                result = ExecutionResult.CantFindFile;
+            }
+            catch (Exception exc)
+            {
+                Console.WriteLine($"Error while executing: {exc.GetType()}: {exc.Message}");
+                result = ExecutionResult.Other;
+            }
+            return (result, timeElapsed);
+        }
+
+        private enum ExecutionResult
+        {
+            Success,
+            CantFindFile,
+            Other,
         }
 
         public void PerformDiscovery(DirectoryInfo currentWorkingDirectory, StringBuilder inputBuilder)
