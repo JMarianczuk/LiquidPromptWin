@@ -240,7 +240,7 @@ namespace LiquidPromptWin
 
                     inputBuilder.Remove(position - 1, 1);
                     position -= 1;
-                    Console.CursorLeft -= 1;
+                    MoveCursorRight(-1);
                     DelOperation(inputBuilder, position);
                     break;
                 case ConsoleKey.Delete:
@@ -443,7 +443,15 @@ namespace LiquidPromptWin
                 var ahead = (repo.Head.TrackingDetails.AheadBy ?? 0) - (repo.Head.TrackingDetails.BehindBy ?? 0);
                 if (ahead != 0)
                 {
-                    infoBuilder.Append($"({ahead}");
+                    var aheadString = ahead.ToString();
+                    ConsoleColor aheadColor = ConsoleColor.Yellow;
+                    if (ahead > 0)
+                    {
+                        aheadString = "+" + aheadString;
+                        aheadColor = ConsoleColor.DarkGray;
+                    }
+
+                    infoBuilder.Append($"({aheadString})", aheadColor);
                 }
                 if (status.IsDirty)
                 {
@@ -504,7 +512,8 @@ namespace LiquidPromptWin
         private void DelOperation(StringBuilder inputBuilder, int position, bool clearTrailing = false)
         {
             string currentInput = inputBuilder.ToString();
-            var cursor = Console.CursorLeft;
+            var cursorLeft = Console.CursorLeft;
+            var cursorTop = Console.CursorTop;
             if (clearTrailing)
             {
                 var arr = new char[currentInput.Length - position + 1];
@@ -521,7 +530,8 @@ namespace LiquidPromptWin
                 Console.Write(' ');
             }
 
-            Console.CursorLeft = cursor;
+            Console.CursorLeft = cursorLeft;
+            Console.CursorTop = cursorTop;
         }
     }
 }
