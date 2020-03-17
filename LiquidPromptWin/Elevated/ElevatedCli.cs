@@ -7,35 +7,19 @@ using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using CliWrap;
-using CliWrap.Models;
 
 namespace LiquidPromptWin.Elevated
 {
-    public class ElevatedCli : ICli
+    public class ElevatedCli
     {
         private readonly string _filePath;
 
         private string _workingDirectory;
         private string _arguments;
-        private Stream _standardInput = Stream.Null;
         private readonly IDictionary<string, string> _environmentVariables = new Dictionary<string, string>();
-        private Encoding _standardOutputEncoding = Console.OutputEncoding;
-        private Encoding _standardErrorEncoding = Console.OutputEncoding;
-        private Action<string> _standardOutputObserver;
-        private Action _standardOutputClosedObserver;
-        private Action<string> _standardErrorObserver;
-        private Action _standardErrorClosedObserver;
-        private CancellationToken _cancellationToken;
-        private bool _killEntireProcessTree;
-        private bool _exitCodeValidation = true;
-        private bool _standardErrorValidation;
 
-        /// <inheritdoc />
         public int? ProcessId { get; private set; }
 
-        /// <summary>
-        /// Initializes an instance of <see cref="Cli"/> on the target executable.
-        /// </summary>
         public ElevatedCli(string filePath)
         {
             _filePath = filePath;
@@ -43,22 +27,19 @@ namespace LiquidPromptWin.Elevated
 
         #region Options
 
-        /// <inheritdoc />
-        public ICli SetWorkingDirectory(string workingDirectory)
+        public ElevatedCli SetWorkingDirectory(string workingDirectory)
         {
             _workingDirectory = workingDirectory;
             return this;
         }
 
-        /// <inheritdoc />
-        public ICli SetArguments(string arguments)
+        public ElevatedCli SetArguments(string arguments)
         {
             _arguments = arguments;
             return this;
         }
 
-        /// <inheritdoc />
-        public ICli SetArguments(IReadOnlyList<string> arguments)
+        public ElevatedCli SetArguments(IReadOnlyList<string> arguments)
         {
             var buffer = new StringBuilder();
 
@@ -125,105 +106,6 @@ namespace LiquidPromptWin.Elevated
 
             return SetArguments(buffer.ToString());
         }
-
-        /// <inheritdoc />
-        public ICli SetStandardInput(Stream standardInput)
-        {
-            _standardInput = standardInput;
-            return this;
-        }
-
-        /// <inheritdoc />
-        public ICli SetStandardInput(string standardInput, Encoding encoding)
-        {
-            // Represent string as stream
-            var data = encoding.GetBytes(standardInput);
-            var stream = new MemoryStream(data, false);
-
-            return SetStandardInput(stream);
-        }
-
-        /// <inheritdoc />
-        public ICli SetStandardInput(string standardInput) => SetStandardInput(standardInput, Console.InputEncoding);
-
-        /// <inheritdoc />
-        public ICli SetEnvironmentVariable(string key, string value)
-        {
-            _environmentVariables[key] = value;
-            return this;
-        }
-
-        /// <inheritdoc />
-        public ICli SetStandardOutputEncoding(Encoding encoding)
-        {
-            _standardOutputEncoding = encoding;
-            return this;
-        }
-
-        /// <inheritdoc />
-        public ICli SetStandardErrorEncoding(Encoding encoding)
-        {
-            _standardErrorEncoding = encoding;
-            return this;
-        }
-
-        /// <inheritdoc />
-        public ICli SetStandardOutputCallback(Action<string> callback)
-        {
-            _standardOutputObserver = callback;
-            return this;
-        }
-
-        /// <inheritdoc />
-        public ICli SetStandardOutputClosedCallback(Action callback)
-        {
-            _standardOutputClosedObserver = callback;
-            return this;
-        }
-
-        /// <inheritdoc />
-        public ICli SetStandardErrorCallback(Action<string> callback)
-        {
-            _standardErrorObserver = callback;
-            return this;
-        }
-
-        /// <inheritdoc />
-        public ICli SetStandardErrorClosedCallback(Action callback)
-        {
-            _standardErrorClosedObserver = callback;
-            return this;
-        }
-
-        /// <inheritdoc />
-        public ICli SetCancellationToken(CancellationToken token, bool killEntireProcessTree)
-        {
-            _cancellationToken = token;
-            _killEntireProcessTree = killEntireProcessTree;
-            return this;
-        }
-
-        /// <inheritdoc />
-        public ICli SetCancellationToken(CancellationToken token)
-        {
-            _cancellationToken = token;
-            return this;
-        }
-
-        /// <inheritdoc />
-        public ICli EnableExitCodeValidation(bool isEnabled = true)
-        {
-            _exitCodeValidation = isEnabled;
-            return this;
-        }
-
-        /// <inheritdoc />
-        public ICli EnableStandardErrorValidation(bool isEnabled = true)
-        {
-            _standardErrorValidation = isEnabled;
-            return this;
-        }
-
         #endregion
 
         #region Execute
@@ -249,38 +131,16 @@ namespace LiquidPromptWin.Elevated
 
             // Create and start process
             var process = new ElevatedCliProcess(
-                startInfo,
-                _standardOutputObserver,
-                _standardErrorObserver,
-                _standardOutputClosedObserver,
-                _standardErrorClosedObserver
+                startInfo
             );
             process.Start();
 
             return process;
         }
 
-        private void ValidateExecutionResult(ExecutionResult result)
+        public void Execute()
         {
-            
-        }
-
-        /// <inheritdoc />
-        public ExecutionResult Execute()
-        {
-            ExecuteAndForget();
-            return new ExecutionResult(0, "", "", DateTime.UtcNow, DateTime.UtcNow);
-        }
-
-        public Task<ExecutionResult> ExecuteAsync()
-        {
-            throw new NotImplementedException();
-        }
-
-        /// <inheritdoc />
-        public void ExecuteAndForget()
-        {
-            // Set up execution context
+            var tSource = new TaskCompletionSource<int>();
             using (var process = StartProcess())
             {
                 ProcessId = process.Id;

@@ -38,7 +38,7 @@ namespace LiquidPromptWin
 
         private bool IsElevated() =>
             new WindowsPrincipal(WindowsIdentity.GetCurrent()).IsInRole(WindowsBuiltInRole.Administrator);
-        public ICli Wrap(string input, DirectoryInfo currentWorkingDirectory, bool elevatedPermission = false, bool elevatedCommand = false)
+        public Command Wrap(string input, DirectoryInfo currentWorkingDirectory, bool elevatedPermission = false, bool elevatedCommand = false)
         {
             var split = input.Split(new[] { ' ' }, 2);
             var filePath = split[0];
@@ -47,41 +47,63 @@ namespace LiquidPromptWin
             {
                 arguments = split[1];
             }
-            ICli wrap;
+            Command wrap = null;
+            ElevatedCli elevated = null;
             if (elevatedPermission && !IsElevated())
             {
-                wrap = new ElevatedCli(filePath);
+                elevated = new ElevatedCli(filePath);
             }
             else if (elevatedCommand && !IsElevated())
             {
-                wrap = new ElevatedCli("cmd.exe");
+                elevated = new ElevatedCli("cmd.exe");
                 arguments = GetArgumentsForElevatedCmd(currentWorkingDirectory, filePath, arguments);
             }
             else
             {
+                RunInputCapable(filePath, arguments, currentWorkingDirectory.FullName);
+                return null;
                 wrap = Cli.Wrap(filePath);
                 //wrap = new InputCapableCli(filePath);
             }
 
-
-            wrap.SetStandardOutputCallback(Console.WriteLine)
-                .SetStandardErrorCallback(Console.WriteLine)
-                //.SetStandardInput(Console.OpenStandardInput())
-                .EnableExitCodeValidation(false)
-                .SetWorkingDirectory(currentWorkingDirectory.FullName)
-                .SetArguments(arguments)
-                .SetCancellationToken(_cancellationTokenSource.Token);
+            if (elevated != null)
+            {
+                elevated = elevated.SetWorkingDirectory(currentWorkingDirectory.FullName)
+                    .SetArguments(arguments);
+                elevated.Execute();
+                return null;
+            }
+            else if (wrap != null)
+            {
+                wrap = wrap.WithStandardOutputPipe(PipeTarget.ToDelegate(Console.WriteLine))
+                    .WithStandardErrorPipe(PipeTarget.ToDelegate(Console.WriteLine))
+                    //.WithStandardInputPipe(PipeSource.FromStream(Console.OpenStandardInput()))
+                    .WithValidation(CommandResultValidation.None)
+                    .WithWorkingDirectory(currentWorkingDirectory.FullName)
+                    .WithArguments(arguments);
+            }
 
             return wrap;
+        }
+
+        private void RunInputCapable(string path, string args, string dir)
+        {
+            var cli = new InputCapableCli(path);
+            cli.SetArguments(args);
+            cli.SetWorkingDirectory(dir);
+            cli.SetStandardOutputCallback(Console.WriteLine);
+            cli.SetStandardInput(Console.OpenStandardInput());
+            cli.EnableExitCodeValidation(false);
+            cli.Execute();
         }
         public void Initialize(string[] args)
         {
             Console.WriteLine("LiquidPrompt for Windows by JMarianczuk. https://github.com/JMarianczuk");
             Console.WriteLine();
             var initialOutput = new List<string>();
-            var cmd = Cli.Wrap("cmd.exe");
-            cmd.SetStandardOutputCallback(line => initialOutput.Add(line));
-            cmd.Execute();
+            var cmd = Cli.Wrap("cmd.exe")
+                .WithStandardOutputPipe(PipeTarget.ToDelegate(line => initialOutput.Add(line)));
+            cmd.ExecuteAsync().Task.Wait();
             foreach (var ele in initialOutput.Take(initialOutput.Count - 2))
             {
                 Console.WriteLine(ele);
@@ -188,12 +210,17 @@ namespace LiquidPromptWin
                 _inputs.Add(input);
                 Console.WriteLine();
                 var wrap = Wrap(input, currentWorkingDirectory, executeWithElevatedPermission, executeCommandWithElevatedPermission);
-                var (exResult, time) = TryExecute(wrap);
+                if (wrap == null)
+                {
+                    //elevated executed and forgotten
+                    continue;
+                }
+                var (exResult, time) = await TryExecute(wrap);
                 if (exResult == ExecutionResult.CantFindFile)
                 {
                     input = "cmd /c " + input;
                     wrap = Wrap(input, currentWorkingDirectory, executeWithElevatedPermission, executeCommandWithElevatedPermission);
-                    (exResult, time) = TryExecute(wrap);
+                    (exResult, time) = await TryExecute(wrap);
                     timeElapsed = time;
                 }
                 else
@@ -203,13 +230,13 @@ namespace LiquidPromptWin
             }
         }
 
-        private (ExecutionResult, TimeSpan) TryExecute(ICli wrap)
+        private async Task<(ExecutionResult, TimeSpan)> TryExecute(Command wrap)
         {
             ExecutionResult result;
             TimeSpan timeElapsed = TimeSpan.Zero;
             try
             {
-                var exResult = wrap.Execute();
+                var exResult = await wrap.ExecuteAsync();
                 result = ExecutionResult.Success;
                 timeElapsed = exResult.RunTime;
             }

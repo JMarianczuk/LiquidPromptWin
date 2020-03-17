@@ -59,90 +59,57 @@ namespace LiquidPromptWin.InputCapable
         public string StandardError => _standardErrorBuffer.ToString();
 
         public InputCapableCliProcess(ProcessStartInfo startInfo,
-            Action<string> standardOutputObserver = null, Action<string> standardErrorObserver = null,
-            Action standardOutputClosedObserver = null, Action standardErrorClosedObserver = null)
+            Action<string> standardOutputObserver = null, Action<string> standardErrorObserver = null)
         {
-            // Create underlying process
             _nativeProcess = new Process { StartInfo = startInfo };
 
-            // Configure start info
             _nativeProcess.StartInfo.CreateNoWindow = true;
             _nativeProcess.StartInfo.RedirectStandardOutput = true;
             _nativeProcess.StartInfo.RedirectStandardError = true;
             _nativeProcess.StartInfo.RedirectStandardInput = true;
             _nativeProcess.StartInfo.UseShellExecute = false;
 
-            // Wire exit event
             _nativeProcess.EnableRaisingEvents = true;
             _nativeProcess.Exited += (sender, args) =>
             {
-                // Record exit time
                 ExitTime = DateTimeOffset.Now;
 
-                // Release signal
                 _exitSignal.Release();
             };
 
-            // Wire stdout
             _nativeProcess.OutputDataReceived += (sender, args) =>
             {
-                // Actual data
                 if (args.Data != null)
                 {
-                    // Write to buffer and invoke observer
                     _standardOutputBuffer.AppendLine(args.Data);
                     standardOutputObserver?.Invoke(args.Data);
-                }
-                // Null means end of stream
-                else
-                {
-                    // Release signal
-                    standardOutputClosedObserver?.Invoke();
-                    _standardOutputEndSignal.Release();
                 }
             };
 
             // Wire stderr
             _nativeProcess.ErrorDataReceived += (sender, args) =>
             {
-                // Actual data
                 if (args.Data != null)
                 {
-                    // Write to buffer and invoke observer
                     _standardErrorBuffer.AppendLine(args.Data);
                     standardErrorObserver?.Invoke(args.Data);
-                }
-                // Null means end of stream
-                else
-                {
-                    // Release signal
-                    standardErrorClosedObserver?.Invoke();
-                    _standardErrorEndSignal.Release();
                 }
             };
         }
 
         public void Start()
         {
-            // Start process
             _nativeProcess.Start();
 
-            // Record start time
             StartTime = DateTimeOffset.Now;
 
-            // Begin reading streams
-            _nativeProcess.BeginOutputReadLine();
-            _nativeProcess.BeginErrorReadLine();
-
-            // Set flag
             _isReading = true;
         }
 
-        public void PipeStandardInput(Stream stream)
+        public Task PipeStandardInput(Stream stream, CancellationToken token)
         {
-            var token = _inputTokenSource.Token;
             // Copy stream and close stdin
-            Task.Run(async () =>
+            return Task.Run(async () =>
             {
                 using (_nativeProcess.StandardInput)
                 {
@@ -150,11 +117,15 @@ namespace LiquidPromptWin.InputCapable
                     _buffer = new byte[bufferSize];
                     while (!token.IsCancellationRequested)
                     {
-                        stream.Read(_buffer, 0, bufferSize);
-
-                        if (token.IsCancellationRequested)
+                        var readTask = stream.ReadAsync(_buffer, 0, bufferSize);
+                        try
                         {
-                            break;
+                            //ReadAsync will not react to passing the token, but WaitAll will throw if the token cancels
+                            Task.WaitAll(new[] { readTask }, token);
+                        }
+                        catch (OperationCanceledException)
+                        {
+                            return;
                         }
 
                         if (_bytesCount > 0)
@@ -162,10 +133,9 @@ namespace LiquidPromptWin.InputCapable
                             _hasUnreadBytes = true;
                             try
                             {
-                                await _nativeProcess.StandardInput.BaseStream.WriteAsync(_buffer, 0, _bytesCount,
-                                    token);
+                                await _nativeProcess.StandardInput.BaseStream.WriteAsync(_buffer, 0, _bytesCount, token);
                             }
-                            catch (TaskCanceledException tcexc)
+                            catch (TaskCanceledException)
                             {
                                 break;
                             }
@@ -176,35 +146,18 @@ namespace LiquidPromptWin.InputCapable
 
                     InputPipingFinished = true;
                 }
-            });
-        }
-
-        public async Task PipeStandardInputAsync(Stream stream)
-        {
-            var token = _inputTokenSource.Token;
-            // Copy stream and close stdin
-            using (_nativeProcess.StandardInput)
-                await stream.CopyToAsync(_nativeProcess.StandardInput.BaseStream);
+            }, token);
         }
 
         public void WaitForExit()
         {
-            // Wait until process exits
             _exitSignal.Wait();
-
-            _inputTokenSource.Cancel();
-
-            // Wait until streams finished reading
-            _standardOutputEndSignal.Wait();
-            _standardErrorEndSignal.Wait();
         }
 
         public async Task WaitForExitAsync()
         {
-            // Wait until process exits
             await _exitSignal.WaitAsync();
 
-            // Wait until streams finished reading
             await _standardOutputEndSignal.WaitAsync();
             await _standardErrorEndSignal.WaitAsync();
         }
@@ -245,13 +198,13 @@ namespace LiquidPromptWin.InputCapable
             // Unsubscribe from process events
             // (process may still trigger events even after getting disposed)
             _nativeProcess.EnableRaisingEvents = false;
-            if (_isReading)
-            {
-                _nativeProcess.CancelOutputRead();
-                _nativeProcess.CancelErrorRead();
+            //if (_isReading)
+            //{
+            //    _nativeProcess.CancelOutputRead();
+            //    _nativeProcess.CancelErrorRead();
 
-                _isReading = false;
-            }
+            //    _isReading = false;
+            //}
 
             // Dispose dependencies
             _nativeProcess.Dispose();

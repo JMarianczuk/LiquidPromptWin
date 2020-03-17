@@ -1,5 +1,4 @@
 ﻿using System;
-using CliWrap.Models;
 using LiquidPromptWin.Elevated;
 
 namespace LiquidPromptWin.InputCapable
@@ -18,5 +17,14 @@ namespace LiquidPromptWin.InputCapable
             _process = process;
         }
 
+    }
+
+    public class ExecutionResult
+    {
+        public ExecutionResult(int exitCode, string standardOutput, string standardError, DateTimeOffset startTime,
+            DateTimeOffset exitTime)
+        {
+
+        }
     }
 }
