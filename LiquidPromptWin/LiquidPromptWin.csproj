@@ -67,6 +67,7 @@
     <Compile Include="CommandLineStringBuilder.cs" />
     <Compile Include="Elevated\ElevatedCli.cs" />
     <Compile Include="InputCapable\ExecutionResultWithRemainingInput.cs" />
+    <Compile Include="InputCapable\ExtraTaskPipeSource.cs" />
     <Compile Include="InputCapable\InputCapableCli.cs" />
     <Compile Include="InputCapable\InputCapableCliProcess.cs" />
     <Compile Include="IStoppableStream.cs" />

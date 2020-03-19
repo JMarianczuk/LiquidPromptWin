@@ -60,10 +60,7 @@ namespace LiquidPromptWin
             }
             else
             {
-                RunInputCapable(filePath, arguments, currentWorkingDirectory.FullName);
-                return null;
                 wrap = Cli.Wrap(filePath);
-                //wrap = new InputCapableCli(filePath);
             }
 
             if (elevated != null)
@@ -77,12 +74,11 @@ namespace LiquidPromptWin
             {
                 wrap = wrap.WithStandardOutputPipe(PipeTarget.ToDelegate(Console.WriteLine))
                     .WithStandardErrorPipe(PipeTarget.ToDelegate(Console.WriteLine))
-                    //.WithStandardInputPipe(PipeSource.FromStream(Console.OpenStandardInput()))
+                    //.WithStandardInputPipe(_pipeSource)
                     .WithValidation(CommandResultValidation.None)
                     .WithWorkingDirectory(currentWorkingDirectory.FullName)
                     .WithArguments(arguments);
             }
-
             return wrap;
         }
 
@@ -113,8 +109,6 @@ namespace LiquidPromptWin
         public async Task Start()
         {
             DirectoryInfo currentWorkingDirectory = new DirectoryInfo(Directory.GetCurrentDirectory());
-            //ExecutionResultWithRemainingInput takeWithResult = null;
-            //ConsoleKeyInfo? takeWithKey = null;
             TimeSpan timeElapsed = TimeSpan.Zero;
             while (true)
             {
@@ -127,21 +121,6 @@ namespace LiquidPromptWin
                 int inHistory = _inputs.Count;
                 while (!inputFinished)
                 {
-                    //ConsoleKeyInfo key;
-                    //if (takeWithKey.HasValue)
-                    //{
-                    //    key = takeWithKey.Value;
-                    //}
-                    //else
-                    //{
-                    //    key = Console.ReadKey(true);
-                    //    if (takeWithResult != null && takeWithResult.RemainingInput.Length > 0)
-                    //    {
-                    //        var temp = Console.InputEncoding.GetChars(takeWithResult.RemainingInput)[0];
-                    //        takeWithKey = key;
-                    //        key = new ConsoleKeyInfo(temp, ConsoleKey.A, false, false, false);
-                    //    }
-                    //}
                     var key = Console.ReadKey(true);
 
                     if (key.Modifiers != 0)
@@ -232,11 +211,13 @@ namespace LiquidPromptWin
 
         private async Task<(ExecutionResult, TimeSpan)> TryExecute(Command wrap)
         {
+            var cts = new CancellationTokenSource();
             ExecutionResult result;
             TimeSpan timeElapsed = TimeSpan.Zero;
             try
             {
-                var exResult = await wrap.ExecuteAsync();
+                var exResult = await wrap.ExecuteAsync(cts.Token);
+                cts.Cancel();
                 result = ExecutionResult.Success;
                 timeElapsed = exResult.RunTime;
             }
